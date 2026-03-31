@@ -10,7 +10,7 @@ SCREEN_WIDTH = 600
 SCREEN_HEIGHT = 800
 MAP_SIZE = 10
 BLOCK_SIZE = (SCREEN_WIDTH - 100) // MAP_SIZE
-SWAP_TIME = 1  # 方格移动动画持续时间，单位s
+SWAP_TIME = 0.5  # 方格移动动画持续时间，单位s
 BACKGROUND_COLOR = pygame.Color("grey")
 
 
@@ -204,12 +204,12 @@ class HappyMatch:
             self.block_map.swap(pos, self.current_chosen)
 
             cur_block.target_vector = Vector(
-                pos[0] - self.current_chosen[0],
                 pos[1] - self.current_chosen[1],
+                pos[0] - self.current_chosen[0],
             )
             tar_block.target_vector = Vector(
-                self.current_chosen[0] - pos[0],
                 self.current_chosen[1] - pos[1],
+                self.current_chosen[0] - pos[0],
             )
 
             cur_block.remaining_time = SWAP_TIME
@@ -229,7 +229,6 @@ class HappyMatch:
 
     def _move_blocks(self, delta_time: float) -> None:
         """移动方格动画"""
-        print(delta_time)
         moving_num = 0  # 正在运动的格子数量
         for line in self.block_map.blocks:
             for block in line:
@@ -244,21 +243,23 @@ class HappyMatch:
         clock = pygame.time.Clock()
         while True:
             delta_time = clock.tick(60) / 1000.0  # 单位s
-            print(f'{delta_time = }, {self.is_animating = }')
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    pygame.quit()
-                    sys.exit()
-                if self.is_animating > 0:
-                    self._move_blocks(delta_time)
-                elif event.type == pygame.MOUSEBUTTONDOWN:
-                    if event.button == pygame.BUTTON_LEFT:
-                        self._handle_click(*event.pos)
+            if self.is_animating > 0:
+                self._move_blocks(delta_time)
+                self.current_chosen = None
+            else:
+                for event in pygame.event.get():
+                    if event.type == pygame.QUIT:
+                        pygame.quit()
+                        sys.exit()
 
-                self.screen.fill(BACKGROUND_COLOR)
+                    if event.type == pygame.MOUSEBUTTONDOWN:
+                        if event.button == pygame.BUTTON_LEFT:
+                            self._handle_click(*event.pos)
 
-                self._draw_map()
-                pygame.display.flip()
+            self.screen.fill(BACKGROUND_COLOR)
+
+            self._draw_map()
+            pygame.display.flip()
 
 
 if __name__ == "__main__":
