@@ -1,6 +1,6 @@
 import sys
 from enum import Enum
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Set
 import random
 import pygame
 
@@ -87,12 +87,47 @@ class BlockMap:
         self.blocks: List[List[Block]] = []
         self._container_top = (SCREEN_HEIGHT - self.height * BLOCK_SIZE) // 2
         self._container_left = 50
-        for i in range(height):
-            self.blocks.append([])
-            for j in range(width):
-                self.blocks[i].append(Block(Color.random()))
+        self.init_map()
 
-    def merge(self):
+    def check_game_over(self) -> bool:
+        """通过检查是否还能交换检查游戏是否结束，返回False代表可以继续游戏"""
+        for row in range(self.height - 1):
+            for col in range(self.width):
+                self.swap((row, col), (row + 1, col))
+                s = self.merge()
+                self.swap((row, col), (row + 1, col))
+                if bool(s):
+                    return False
+        for row in range(self.height):
+            for col in range(self.width - 1):
+                self.swap((row, col), (row, col + 1))
+                s = self.merge()
+                self.swap((row, col), (row, col + 1))
+                if bool(s):
+                    return False
+
+        return True
+
+    def init_map(self) -> None:
+        """地图初始化，保证没有三连，保证不会直接死局"""
+        for row in range(self.height):
+            self.blocks.append([])
+            for col in range(self.width):
+                block = Block(Color.random())
+                left_b = None
+                top_b = None
+                if row >= 2 and self.blocks[row - 1][col] == self.blocks[row - 2][col]:
+                    left_b = self.blocks[row - 1][col]
+                if col >= 2 and self.blocks[row][col - 1] == self.blocks[row][col - 2]:
+                    top_b = self.blocks[row][col - 1]
+                while (left_b and block == left_b) or (top_b and block == top_b):
+                    block = Block(Color.random())
+                self.blocks[row].append(block)
+        if self.check_game_over():
+            self.init_map()
+
+    def merge(self) -> Set[Tuple[int, int]]:
+        """返回可以被消除的下标集合"""
         merge_pos = set()
         for row in range(self.height - 2):
             for col in range(self.width):
