@@ -10,7 +10,7 @@ SCREEN_WIDTH = 600
 SCREEN_HEIGHT = 800
 MAP_SIZE = 10
 BLOCK_SIZE = (SCREEN_WIDTH - 100) // MAP_SIZE
-SWAP_TIME = 0.5  # 方格移动动画持续时间，单位s
+SWAP_TIME = 0.2  # 方格移动动画持续时间，单位s
 BACKGROUND_COLOR = pygame.Color("grey")
 
 
@@ -18,6 +18,12 @@ class Vector:
     def __init__(self, x: float, y: float):
         self.x = x
         self.y = y
+
+    def __repr__(self):
+        return f"<{self.x}, {self.y}>"
+
+    def __eq__(self, other):
+        return self.x == other.x and self.y == other.y
 
     def __add__(self, other):
         return Vector(self.x + other.x, self.y + other.y)
@@ -64,6 +70,10 @@ class Block:
     @property
     def offset(self) -> Vector:
         """动画中，相比原位的偏移"""
+        if self.remaining_time <= 0:
+            # 帧率原因导致运动过头，此处对齐网格
+            self.remaining_time = 0
+            return Vector(0, 0)
         return Vector(
             self.offset_vector.x - self.speed.x * self.remaining_time,
             self.offset_vector.y - self.speed.y * self.remaining_time,
@@ -193,7 +203,6 @@ class HappyMatch:
         if self.current_chosen is not None and self.is_neighbor(
             pos, self.current_chosen
         ):
-            print("swap")
             self.is_animating += 2
             cur_block = self.block_map.blocks[self.current_chosen[0]][
                 self.current_chosen[1]
@@ -236,7 +245,7 @@ class HappyMatch:
                     moving_num += 1
                     block.remaining_time -= delta_time
                 else:
-                    block.target_vector = Vector(0 ,0)
+                    block.target_vector = Vector(0, 0)
         self.is_animating = moving_num
 
     def loop(self):
