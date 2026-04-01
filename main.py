@@ -40,6 +40,12 @@ class Vector:
     def __floordiv__(self, other):
         return Vector(self.x // other, self.y // other)
 
+class Status(Enum):
+    WAITING = 0
+    ANIMATING = 1
+    ANIMATED = 2
+    GAMEOVER = 3
+
 
 class Color(Enum):
     CORAL = pygame.Color("coral")
@@ -188,7 +194,8 @@ class HappyMatch:
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
         self.block_map: BlockMap = BlockMap(MAP_SIZE, MAP_SIZE)
         self.current_chosen: Optional[Tuple[int, int]] = None  # 当前选中的格子下标
-        self.is_animating: int = 0  # 正在播放动画的格子
+        self.status: Status = Status.WAITING
+        self.animating_num: int = 0  # 正在播放动画的格子
 
     @staticmethod
     def is_neighbor(pos1: Tuple[int, int], pos2: Tuple[int, int]) -> bool:
@@ -237,7 +244,8 @@ class HappyMatch:
         if self.current_chosen is not None and self.is_neighbor(
             pos, self.current_chosen
         ):
-            self.is_animating += 2
+            # swap开始
+            self.animating_num += 2
             cur_block = self.block_map.blocks[self.current_chosen[0]][
                 self.current_chosen[1]
             ]
@@ -246,11 +254,11 @@ class HappyMatch:
             # 数据直接交换，ui再动画交换
             self.block_map.swap(pos, self.current_chosen)
 
-            cur_block.target_vector = Vector(
+            cur_block.offset_vector = Vector(
                 pos[1] - self.current_chosen[1],
                 pos[0] - self.current_chosen[0],
             )
-            tar_block.target_vector = Vector(
+            tar_block.offset_vector = Vector(
                 self.current_chosen[1] - pos[1],
                 self.current_chosen[0] - pos[0],
             )
@@ -259,12 +267,12 @@ class HappyMatch:
             tar_block.remaining_time = SWAP_TIME
 
             cur_block.speed = Vector(
-                BLOCK_SIZE * cur_block.target_vector.x / SWAP_TIME,
-                BLOCK_SIZE * cur_block.target_vector.y / SWAP_TIME,
+                BLOCK_SIZE * cur_block.offset_vector.x / SWAP_TIME,
+                BLOCK_SIZE * cur_block.offset_vector.y / SWAP_TIME,
             )
             tar_block.speed = Vector(
-                BLOCK_SIZE * tar_block.target_vector.x / SWAP_TIME,
-                BLOCK_SIZE * tar_block.target_vector.y / SWAP_TIME,
+                BLOCK_SIZE * tar_block.offset_vector.x / SWAP_TIME,
+                BLOCK_SIZE * tar_block.offset_vector.y / SWAP_TIME,
             )
 
         else:
@@ -279,28 +287,32 @@ class HappyMatch:
                     moving_num += 1
                     block.remaining_time -= delta_time
                 else:
-                    block.target_vector = Vector(0, 0)
-        self.is_animating = moving_num
+                    block.offset_vector = Vector(0, 0)
+        self.animating_num = moving_num
 
     def loop(self):
         clock = pygame.time.Clock()
-        while True:
+        self.status = Status.WAITING
+        while self.status != Status.GAMEOVER:
             delta_time = clock.tick(60) / 1000.0  # 单位s
-            if self.is_animating > 0:
+            if self.animating_num > 0:
                 self._move_blocks(delta_time)
                 self.current_chosen = None
             else:
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT:
                         pygame.quit()
-                        sys.exit()
+                        sys.exit(0)
+                    if event.type == pygame.KEYDOWN:
+                        if event.key == pygame.K_ESCAPE:
+                            self.status = Status.GAMEOVER
+                            break
 
                     if event.type == pygame.MOUSEBUTTONDOWN:
                         if event.button == pygame.BUTTON_LEFT:
                             self._handle_click(*event.pos)
 
             self.screen.fill(BACKGROUND_COLOR)
-
             self._draw_map()
             pygame.display.flip()
 
