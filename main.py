@@ -1,324 +1,222 @@
-import sys
-from enum import Enum
-from typing import List, Tuple, Optional, Set
+import arcade
 import random
-import pygame
+from enum import Enum, auto
+from typing import Optional, List
 
-# https://www.pygame.org/docs/ref/color_list.html 预设颜色预览网站
-
+# --- 常量 ---
 SCREEN_WIDTH = 600
-SCREEN_HEIGHT = 800
-MAP_SIZE = 10
-BLOCK_SIZE = (SCREEN_WIDTH - 100) // MAP_SIZE
-SWAP_TIME = 0.2  # 方格移动动画持续时间，单位s
-BACKGROUND_COLOR = pygame.Color("grey")
+SCREEN_HEIGHT = 700
+MARGIN = 60
+GRID_SIZE = 8
+BLOCK_SPACING = (SCREEN_WIDTH - MARGIN * 2) // GRID_SIZE
+
+BLOCK_SCALE = BLOCK_SPACING / 200
+SELECT_SCALE = BLOCK_SPACING / 64
 
 
-class Vector:
-    def __init__(self, x: float, y: float):
-        self.x = x
-        self.y = y
-
-    def __repr__(self):
-        return f"<{self.x}, {self.y}>"
-
-    def __eq__(self, other):
-        return self.x == other.x and self.y == other.y
-
-    def __add__(self, other):
-        return Vector(self.x + other.x, self.y + other.y)
-
-    def __sub__(self, other):
-        return Vector(self.x - other.x, self.y - other.y)
-
-    def __mul__(self, other):
-        return Vector(self.x * other, self.y * other)
-
-    def __truediv__(self, other):
-        return Vector(self.x / other, self.y / other)
-
-    def __floordiv__(self, other):
-        return Vector(self.x // other, self.y // other)
-
-class Status(Enum):
-    WAITING = 0
-    ANIMATING = 1
-    ANIMATED = 2
-    GAMEOVER = 3
+class GameState(Enum):
+    IDLE = auto()
+    ANIMATING = auto()  # 包含交换、掉落等所有动画状态
 
 
-class Color(Enum):
-    CORAL = pygame.Color("coral")
-    GREEN = pygame.Color("green")
-    CYAN = pygame.Color("cyan")
-    YELLOW = pygame.Color("yellow")
-    PERU = pygame.Color("peru")
-    WHEAT = pygame.Color("wheat")
-
-    @classmethod
-    def random(cls) -> "Color":
-        return random.choice(list(cls))
+class BlockType(Enum):
+    BEAR = "bear"
+    CHICK = "chick"
+    DOG = "dog"
+    PIG = "pig"
+    PARROT = "parrot"
+    FROG = "frog"
 
 
-class Block:
-    def __init__(self, color: Color):
-        self.color = color
-        self.offset_vector: Vector = Vector(0, 0)  # 总位移
-        self.speed = Vector(0, 0)  # 速度向量，单位：像素/s
-        self.remaining_time: float = 0.0  # 动画过程还剩多长时间，必须不为负数。单位：s
+class Block(arcade.Sprite):
+    def __init__(self, block_type: BlockType):
+        # 3.0+ 推荐显式路径
+        super().__init__(f"assets/{block_type.value}.png", scale=BLOCK_SCALE)
+        self.block_type = block_type
+        self.target_x = 0
+        self.target_y = 0
 
-    def __repr__(self):
-        return f"<{self.color}>"
+    def move_to_grid(self, r: int, c:int)->None:
+        self.target_x = MARGIN + c * BLOCK_SPACING + BLOCK_SPACING // 2
+        self.target_y = MARGIN + r * BLOCK_SPACING + BLOCK_SPACING // 2
 
-    def __eq__(self, other: "Block"):
-        return self.color == other.color
+    def update_animation(self) -> bool:
+        """返回是否仍在移动"""
+        arrived = True
+        if abs(self.center_x - self.target_x) > 1:
+            self.center_x += (self.target_x - self.center_x) * 0.15
+            arrived = False
+        else:
+            self.center_x = self.target_x
 
-    @property
-    def offset(self) -> Vector:
-        """动画中，相比原位的偏移"""
-        if self.remaining_time <= 0:
-            # 帧率原因导致运动过头，此处对齐网格
-            self.remaining_time = 0
-            return Vector(0, 0)
-        return Vector(
-            self.offset_vector.x - self.speed.x * self.remaining_time,
-            self.offset_vector.y - self.speed.y * self.remaining_time,
-        )
+        if abs(self.center_y - self.target_y) > 1:
+            self.center_y += (self.target_y - self.center_y) * 0.15
+            arrived = False
+        else:
+            self.center_y = self.target_y
+        return not arrived
 
 
-class BlockMap:
-    def __init__(self, width: int, height: int) -> None:
-        self.width = width
-        self.height = height
-        self.blocks: List[List[Block]] = []
-        self._container_top = (SCREEN_HEIGHT - self.height * BLOCK_SIZE) // 2
-        self._container_left = 50
-        self.init_map()
+class HappyMatch(arcade.Window):
+    def __init__(self):
+        super().__init__(SCREEN_WIDTH, SCREEN_HEIGHT, "Happy Match Arcade 3.0")
+        arcade.set_background_color(arcade.color.AMAZON)
 
-    def check_game_over(self) -> bool:
-        """通过检查是否还能交换检查游戏是否结束，返回False代表可以继续游戏"""
-        for row in range(self.height - 1):
-            for col in range(self.width):
-                self.swap((row, col), (row + 1, col))
-                s = self.merge()
-                self.swap((row, col), (row + 1, col))
-                if bool(s):
-                    return False
-        for row in range(self.height):
-            for col in range(self.width - 1):
-                self.swap((row, col), (row, col + 1))
-                s = self.merge()
-                self.swap((row, col), (row, col + 1))
-                if bool(s):
-                    return False
+        # 3.0 核心：所有显示对象必须在 SpriteList 里
+        self.blocks_list = arcade.SpriteList()
+        self.selection_list = arcade.SpriteList()
 
+        # 逻辑矩阵
+        self.grid: List[List[Optional[Block]]] = [[None for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
+
+        self.state = GameState.IDLE
+        self.selected_block: Optional[Block] = None
+        self.swapping_pair: List[Block] = []
+        self.is_reversing = False
+
+        # 初始化选框并放入专门的 SpriteList
+        self.selection_sprite = arcade.Sprite(":resources:/gui_basic_assets/checkbox/empty.png", scale=SELECT_SCALE)
+        self.selection_list.append(self.selection_sprite)
+
+        self.setup_game()
+
+    def setup_game(self):
+        for r in range(GRID_SIZE):
+            for c in range(GRID_SIZE):
+                while True:
+                    b_type = random.choice(list(BlockType))
+                    if c >= 2 and self.grid[r][c - 1].block_type == b_type and self.grid[r][
+                        c - 2].block_type == b_type: continue
+                    if r >= 2 and self.grid[r - 1][c].block_type == b_type and self.grid[r - 2][
+                        c].block_type == b_type: continue
+
+                    block = Block(b_type)
+                    block.move_to_grid(r, c)
+                    block.center_x, block.center_y = block.target_x, block.target_y
+                    self.grid[r][c] = block
+                    self.blocks_list.append(block)
+                    break
+
+    def get_grid_pos(self, block: Block):
+        for r in range(GRID_SIZE):
+            for c in range(GRID_SIZE):
+                if self.grid[r][c] == block: return r, c
+        return -1, -1
+
+    def find_matches(self):
+        to_del = set()
+        for r in range(GRID_SIZE):
+            for c in range(GRID_SIZE - 2):
+                if self.grid[r][c] and self.grid[r][c + 1] and self.grid[r][c + 2]:
+                    if self.grid[r][c].block_type == self.grid[r][c + 1].block_type == self.grid[r][c + 2].block_type:
+                        to_del.update([self.grid[r][c], self.grid[r][c + 1], self.grid[r][c + 2]])
+        for c in range(GRID_SIZE):
+            for r in range(GRID_SIZE - 2):
+                if self.grid[r][c] and self.grid[r + 1][c] and self.grid[r + 2][c]:
+                    if self.grid[r][c].block_type == self.grid[r + 1][c].block_type == self.grid[r + 2][c].block_type:
+                        to_del.update([self.grid[r][c], self.grid[r + 1][c], self.grid[r + 2][c]])
+        return list(to_del)
+
+    def on_update(self, delta_time: float):
+        # 动画更新
+        moving = False
+        for b in self.blocks_list:
+            if b.update_animation():
+                moving = True
+
+        if moving:
+            self.state = GameState.ANIMATING
+            return
+
+        # 动画停下后的逻辑处理
+        if self.state == GameState.ANIMATING:
+            # 如果是刚结束交换动画
+            if self.swapping_pair:
+                b1, b2 = self.swapping_pair
+                if self.find_matches():
+                    self.swapping_pair = []
+                    self.is_reversing = False
+                    self.process_elimination()
+                elif not self.is_reversing:
+                    # 没匹配到，执行回换
+                    self.swap_in_grid(b1, b2)
+                    self.is_reversing = True
+                else:
+                    # 回换结束
+                    self.swapping_pair = []
+                    self.is_reversing = False
+                    self.state = GameState.IDLE
+            else:
+                # 检查连消
+                if not self.process_elimination():
+                    self.state = GameState.IDLE
+
+    def swap_in_grid(self, b1, b2):
+        r1, c1 = self.get_grid_pos(b1)
+        r2, c2 = self.get_grid_pos(b2)
+        self.grid[r1][c1], self.grid[r2][c2] = self.grid[r2][c2], self.grid[r1][c1]
+        b1.move_to_grid(r2, c2)
+        b2.move_to_grid(r1, c1)
+
+    def process_elimination(self):
+        matches = self.find_matches()
+        if not matches: return False
+
+        for b in matches:
+            r, c = self.get_grid_pos(b)
+            self.grid[r][c] = None
+            b.remove_from_sprite_lists()
+
+        # 掉落逻辑
+        for c in range(GRID_SIZE):
+            column = []
+            for r in range(GRID_SIZE):
+                if self.grid[r][c]: column.append(self.grid[r][c])
+
+            for r in range(GRID_SIZE):
+                if r < len(column):
+                    self.grid[r][c] = column[r]
+                    self.grid[r][c].move_to_grid(r, c)
+                else:
+                    # 补新
+                    new_b = Block(random.choice(list(BlockType)))
+                    new_b.center_x = MARGIN + c * BLOCK_SPACING + BLOCK_SPACING // 2
+                    new_b.center_y = SCREEN_HEIGHT + 50
+                    new_b.move_to_grid(r, c)
+                    self.grid[r][c] = new_b
+                    self.blocks_list.append(new_b)
         return True
 
-    def init_map(self) -> None:
-        """地图初始化，保证没有三连，保证不会直接死局"""
-        for row in range(self.height):
-            self.blocks.append([])
-            for col in range(self.width):
-                block = Block(Color.random())
-                left_b = None
-                top_b = None
-                if row >= 2 and self.blocks[row - 1][col] == self.blocks[row - 2][col]:
-                    left_b = self.blocks[row - 1][col]
-                if col >= 2 and self.blocks[row][col - 1] == self.blocks[row][col - 2]:
-                    top_b = self.blocks[row][col - 1]
-                while (left_b and block == left_b) or (top_b and block == top_b):
-                    block = Block(Color.random())
-                self.blocks[row].append(block)
-        if self.check_game_over():
-            self.init_map()
+    def on_draw(self):
+        self.clear()
+        # 3.0 正确姿势：哪怕一个 Sprite 也要用 SpriteList.draw()
+        if self.selected_block and self.state == GameState.IDLE:
+            self.selection_sprite.center_x = self.selected_block.center_x
+            self.selection_sprite.center_y = self.selected_block.center_y
+            self.selection_list.draw()
 
-    def merge(self) -> Set[Tuple[int, int]]:
-        """返回可以被消除的下标集合"""
-        merge_pos = set()
-        for row in range(self.height - 2):
-            for col in range(self.width):
-                if (
-                    self.blocks[row][col]
-                    == self.blocks[row + 1][col]
-                    == self.blocks[row + 2][col]
-                ):
-                    merge_pos.add((row, col))
-                    merge_pos.add((row + 1, col))
-                    merge_pos.add((row + 2, col))
-        for row in range(self.height):
-            for col in range(self.width - 2):
-                if (
-                    self.blocks[row][col]
-                    == self.blocks[row][col + 1]
-                    == self.blocks[row][col + 2]
-                ):
-                    merge_pos.add((row, col))
-                    merge_pos.add((row, col + 1))
-                    merge_pos.add((row, col + 2))
+        self.blocks_list.draw()
 
-        return merge_pos
+    def on_mouse_press(self, x: int, y: int, button: int, modifiers: int):
+        if self.state != GameState.IDLE: return
 
-    def swap(self, pos1: Tuple[int, int], pos2: Tuple[int, int]) -> None:
-        r1, c1 = pos1
-        r2, c2 = pos2
-        self.blocks[r1][c1], self.blocks[r2][c2] = (
-            self.blocks[r2][c2],
-            self.blocks[r1][c1],
-        )
+        clicked = arcade.get_sprites_at_point((x, y), self.blocks_list)
+        if not clicked: return
 
-    def pos_to_pixel(self, row: int, col: int) -> Vector:
-        """输入格子的下标，返回格子当前（包括动画中）实际像素"""
-        base = Vector(
-            self._container_left + col * BLOCK_SIZE,
-            self._container_top + row * BLOCK_SIZE,
-        )
-        return base + self.blocks[row][col].offset
-
-    def pixel_to_pos(self, x: int, y: int) -> Optional[Tuple[int, int]]:
-        """根据鼠标的位置返回对应的下标，不存在就返回None"""
-        if (
-            x <= self._container_left
-            or x >= SCREEN_WIDTH - self._container_left
-            or y <= self._container_top
-            or y >= SCREEN_HEIGHT - self._container_top
-        ):  # 此处判断必须加上等于，否则在边界会列表下标超限报错
-            return None
-        return (
-            (y - self._container_top) // BLOCK_SIZE,
-            (x - self._container_left) // BLOCK_SIZE,
-        )
-
-
-class HappyMatch:
-    def __init__(self):
-        self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-        self.block_map: BlockMap = BlockMap(MAP_SIZE, MAP_SIZE)
-        self.current_chosen: Optional[Tuple[int, int]] = None  # 当前选中的格子下标
-        self.status: Status = Status.WAITING
-        self.animating_num: int = 0  # 正在播放动画的格子
-
-    @staticmethod
-    def is_neighbor(pos1: Tuple[int, int], pos2: Tuple[int, int]) -> bool:
-        """两个坐标是否相邻"""
-        return (abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])) == 1
-
-    def _draw_map(self):
-        is_hover = False
-        for row in range(self.block_map.height):
-            for col in range(self.block_map.width):
-                block: Block = self.block_map.blocks[row][col]
-                pos_vec = self.block_map.pos_to_pixel(row, col)
-                rect = (
-                    pos_vec.x,
-                    pos_vec.y,
-                    BLOCK_SIZE,
-                    BLOCK_SIZE,
-                )
-                pygame.draw.rect(self.screen, block.color.value, rect, border_radius=5)
-
-                mouse_pos = pygame.mouse.get_pos()
-                pos = self.block_map.pixel_to_pos(*mouse_pos)
-                if pos is not None and pos == (row, col):
-                    is_hover = True
-                is_chosen = self.current_chosen == (row, col)
-
-                border_color = BACKGROUND_COLOR  # 和背景颜色相同的边框，营造分隔的感觉
-                if is_chosen:
-                    border_color = pygame.Color("grey40")  # 深一点
-                elif is_hover:
-                    border_color = pygame.Color("grey55")  # 浅一点
-                pygame.draw.rect(
-                    self.screen,
-                    border_color,
-                    rect,
-                    border_radius=5,
-                    width=2 if border_color == BACKGROUND_COLOR else 3,
-                )
-                is_hover = False
-
-    def _handle_click(self, x: int, y: int) -> None:
-        pos = self.block_map.pixel_to_pos(x, y)
-        if pos is None:
-            self.current_chosen = None
-            return
-        if self.current_chosen is not None and self.is_neighbor(
-            pos, self.current_chosen
-        ):
-            # swap开始
-            self.animating_num += 2
-            cur_block = self.block_map.blocks[self.current_chosen[0]][
-                self.current_chosen[1]
-            ]
-            tar_block = self.block_map.blocks[pos[0]][pos[1]]
-
-            # 数据直接交换，ui再动画交换
-            self.block_map.swap(pos, self.current_chosen)
-
-            cur_block.offset_vector = Vector(
-                pos[1] - self.current_chosen[1],
-                pos[0] - self.current_chosen[0],
-            )
-            tar_block.offset_vector = Vector(
-                self.current_chosen[1] - pos[1],
-                self.current_chosen[0] - pos[0],
-            )
-
-            cur_block.remaining_time = SWAP_TIME
-            tar_block.remaining_time = SWAP_TIME
-
-            cur_block.speed = Vector(
-                BLOCK_SIZE * cur_block.offset_vector.x / SWAP_TIME,
-                BLOCK_SIZE * cur_block.offset_vector.y / SWAP_TIME,
-            )
-            tar_block.speed = Vector(
-                BLOCK_SIZE * tar_block.offset_vector.x / SWAP_TIME,
-                BLOCK_SIZE * tar_block.offset_vector.y / SWAP_TIME,
-            )
-
+        current = clicked[0]
+        if not self.selected_block:
+            self.selected_block = current
         else:
-            self.current_chosen = pos
-
-    def _move_blocks(self, delta_time: float) -> None:
-        """移动方格动画"""
-        moving_num = 0  # 正在运动的格子数量
-        for line in self.block_map.blocks:
-            for block in line:
-                if block.remaining_time > 0:
-                    moving_num += 1
-                    block.remaining_time -= delta_time
-                else:
-                    block.offset_vector = Vector(0, 0)
-        self.animating_num = moving_num
-
-    def loop(self):
-        clock = pygame.time.Clock()
-        self.status = Status.WAITING
-        while self.status != Status.GAMEOVER:
-            delta_time = clock.tick(60) / 1000.0  # 单位s
-            if self.animating_num > 0:
-                self._move_blocks(delta_time)
-                self.current_chosen = None
+            r1, c1 = self.get_grid_pos(self.selected_block)
+            r2, c2 = self.get_grid_pos(current)
+            if abs(r1 - r2) + abs(c1 - c2) == 1:
+                self.swapping_pair = [self.selected_block, current]
+                self.swap_in_grid(self.swapping_pair[0], self.swapping_pair[1])
+                self.state = GameState.ANIMATING
+                self.selected_block = None
             else:
-                for event in pygame.event.get():
-                    if event.type == pygame.QUIT:
-                        pygame.quit()
-                        sys.exit(0)
-                    if event.type == pygame.KEYDOWN:
-                        if event.key == pygame.K_ESCAPE:
-                            self.status = Status.GAMEOVER
-                            break
-
-                    if event.type == pygame.MOUSEBUTTONDOWN:
-                        if event.button == pygame.BUTTON_LEFT:
-                            self._handle_click(*event.pos)
-
-            self.screen.fill(BACKGROUND_COLOR)
-            self._draw_map()
-            pygame.display.flip()
+                self.selected_block = current
 
 
 if __name__ == "__main__":
-    pygame.init()
-    happy_match = HappyMatch()
-    happy_match.block_map.merge()
-    happy_match.loop()
+    HappyMatch().run()
