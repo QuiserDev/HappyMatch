@@ -1,0 +1,48 @@
+[tool.mypy]
+python_version = "3.10"
+
+# 开启所有严格模式相关的标志位
+strict = true
+
+# 显示详细的错误信息
+show_error_codes = true
+show_column_numbers = true
+show_error_context = true
+pretty = true
+
+# 禁用动态类型
+disallow_any_generics = true
+disallow_subclassing_any = true
+disallow_any_unimported = false # 允许使用未导入但设置了 ignore_missing_imports 的类型
+
+# 强制要求类型提示
+disallow_untyped_calls = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+
+# None 与 Optional 处理
+no_implicit_optional = true
+strict_optional = true
+
+# 警告与代码质量
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = true
+warn_unreachable = true
+warn_unused_configs = true
+
+# 严格的等号行为
+strict_equality = true
+
+# --- 针对第三方库的特殊处理 ---
+# Arcade 和 Pyglet 在某些版本中可能缺乏完整的 `.pyi` 类型存根文件
+[[tool.mypy.overrides]]
+module = [
+    "arcade.*",
+    "pyglet.*"
+]
+ignore_missing_imports = true
+# 因为第三方库通常会有 any 类型返回，调用时不报错
+disallow_untyped_calls = false
