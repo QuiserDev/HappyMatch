@@ -106,7 +106,6 @@ class GridMap(arcade.Sprite):
                 blk.center_x = MARGIN + col * BLOCK_WIDTH + BLOCK_WIDTH // 2
                 blk.center_y = MARGIN + row * BLOCK_WIDTH + BLOCK_WIDTH // 2
                 self.block_list.append(blk)
-        # todo 避免初始化死局
 
     def draw(self) -> None:
         if self.clicked_block is not None:
