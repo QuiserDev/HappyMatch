@@ -248,12 +248,17 @@ class GameManager:
     def on_animate_end(self, block: Block) -> None:
         """block动画结束的回调函数"""
         if self.animating_blocks == 0:
+            if self.is_game_over():
+                self.on_game_over()
             mergeable = self.get_mergeable()
             if mergeable:
                 self.fall_down_with_animation(mergeable)
             elif self.just_swapped_blocks:
                 self.swap_with_animation(*self.just_swapped_blocks)
             self.just_swapped_blocks = []
+
+    def on_game_over(self) -> None:
+        print("GAME OVER")
 
     def on_swap_animate_end(self, block: Block) -> None:
         self.swapping_blocks -= 1
