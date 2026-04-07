@@ -1,11 +1,12 @@
 import random
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Callable
 from models import Block, GridMap, BlockType
 from constants import GRID_ROWS, GRID_COLS, BLOCK_WIDTH, MARGIN
 
 
 class GameManager:
-    def __init__(self) -> None:
+    def __init__(self, on_game_over: Callable[[], None]) -> None:
+        self._on_game_over = on_game_over
         self.map = GridMap(GRID_ROWS, GRID_COLS)
         for block in self.map.block_list:
             block.on_animation_end = self.on_fall_animate_end
@@ -146,6 +147,7 @@ class GameManager:
 
     def on_game_over(self) -> None:
         print("GAME OVER")
+        self._on_game_over()
 
     def on_swap_animate_end(self, block: Block) -> None:
         self.swapping_blocks -= 1
