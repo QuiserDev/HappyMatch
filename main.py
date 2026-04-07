@@ -1,22 +1,24 @@
-import arcade
 import random
-from enum import Enum, auto
-from typing import Optional, List
+from enum import Enum
+from typing import Optional, Tuple, Callable, List, Any
+import arcade
+from pyglet.math import Vec2
 
-# --- 常量 ---
-SCREEN_WIDTH = 600
-SCREEN_HEIGHT = 700
-MARGIN = 60
-GRID_SIZE = 8
-BLOCK_SPACING = (SCREEN_WIDTH - MARGIN * 2) // GRID_SIZE
+# todo 积分系统
+# todo GUI功能
+# todo 音效
 
-BLOCK_SCALE = BLOCK_SPACING / 200
-SELECT_SCALE = BLOCK_SPACING / 64
+SCREEN_WIDTH = 800  # 窗口宽度
+SCREEN_HEIGHT = 800  # 窗口高度
+MARGIN = 50  # 边距
 
+GRID_ROWS = 10
+GRID_COLS = GRID_ROWS
 
-class GameState(Enum):
-    IDLE = auto()
-    ANIMATING = auto()  # 包含交换、掉落等所有动画状态
+BLOCK_WIDTH = (SCREEN_WIDTH - MARGIN * 2) // GRID_COLS
+
+BLOCK_SCALE = BLOCK_WIDTH / 200  # 素材宽度有参差，大体为200px
+BLOCK_BACKGROUND_SCALE = BLOCK_WIDTH / 64  # 素材为64px的正方形
 
 
 class BlockType(Enum):
@@ -29,194 +31,267 @@ class BlockType(Enum):
 
 
 class Block(arcade.Sprite):
-    def __init__(self, block_type: BlockType):
-        # 3.0+ 推荐显式路径
-        super().__init__(f"assets/{block_type.value}.png", scale=BLOCK_SCALE)
+    def __init__(self, block_type: BlockType, scale: float = BLOCK_SCALE) -> None:
+        super().__init__(f"assets/{block_type.value}.png", scale)
         self.block_type = block_type
-        self.target_x = 0
-        self.target_y = 0
+        self.target: Optional[Tuple[float | int, float | int] | Vec2] = None
+        self.on_animation_end: Optional[Callable[["Block"], None]] = None
 
-    def move_to_grid(self, r: int, c:int)->None:
-        self.target_x = MARGIN + c * BLOCK_SPACING + BLOCK_SPACING // 2
-        self.target_y = MARGIN + r * BLOCK_SPACING + BLOCK_SPACING // 2
+    def update(self, delta_time: float = 1 / 60, *args: Any, **kwargs: Any) -> None:
+        if self.target is not None:
+            self.center_x = arcade.math.lerp(self.center_x, self.target[0], 0.1)
+            self.center_y = arcade.math.lerp(self.center_y, self.target[1], 0.1)
+            if (
+                abs(self.target[0] - self.center_x) < 1
+                and abs(self.target[1] - self.center_y) < 1
+            ):
+                # 极度接近，设置为目标值
+                self.center_x = self.target[0]
+                self.center_y = self.target[1]
+                self.target = None
+                if self.on_animation_end is not None:
+                    self.on_animation_end(self)
 
-    def update_animation(self) -> bool:
-        """返回是否仍在移动"""
-        arrived = True
-        if abs(self.center_x - self.target_x) > 1:
-            self.center_x += (self.target_x - self.center_x) * 0.15
-            arrived = False
+
+class GridMap(arcade.Sprite):
+    def __init__(self, row: int, col: int) -> None:
+        super().__init__()
+        self.clicked_block: Optional[Block] = None
+
+        self.row = row
+        self.col = col
+        self.block_list: arcade.SpriteList[Block] = arcade.SpriteList()
+        self.background_sprite = arcade.Sprite(
+            arcade.load_texture(":resources:/gui_basic_assets/checkbox/empty.png"),
+            BLOCK_BACKGROUND_SCALE,
+        )
+        self.bg_sprite_list: arcade.SpriteList[arcade.Sprite] = arcade.SpriteList()
+        self.setup()
+
+    def get_rc(self, row: int, col: int) -> Block:
+        """通过row col行列的二维信息获取一维列表中的block"""
+        return self.block_list[row * self.col + col]
+
+    def is_neighbor(self, block1: Block, block2: Block) -> bool:
+        """两个block在画面上是否相邻"""
+        idx1 = self.block_list.index(block1)
+        idx2 = self.block_list.index(block2)
+        r1, c1 = divmod(idx1, self.col)
+        r2, c2 = divmod(idx2, self.col)
+        return abs(r1 - r2) + abs(c1 - c2) == 1
+
+    def setup(self) -> None:
+        self.bg_sprite_list.append(self.background_sprite)
+
+        for row in range(self.row):
+            for col in range(self.col):
+
+                bottom_type = None
+                left_type = None
+                if row >= 2 and (
+                    self.get_rc(row - 1, col).block_type
+                    == self.get_rc(row - 2, col).block_type
+                ):
+                    bottom_type = self.get_rc(row - 1, col).block_type
+                if col >= 2 and (
+                    self.get_rc(row, col - 1).block_type
+                    == self.get_rc(row, col - 2).block_type
+                ):
+                    left_type = self.get_rc(row, col - 1).block_type
+                final_type = random.choice(list(BlockType))
+                while final_type == bottom_type or final_type == left_type:
+                    final_type = random.choice(list(BlockType))
+
+                blk = Block(final_type)
+                blk.center_x = MARGIN + col * BLOCK_WIDTH + BLOCK_WIDTH // 2
+                blk.center_y = MARGIN + row * BLOCK_WIDTH + BLOCK_WIDTH // 2
+                self.block_list.append(blk)
+
+    def draw(self) -> None:
+        if self.clicked_block is not None:
+            self.background_sprite.position = self.clicked_block.position
+            self.bg_sprite_list.draw()
+        self.block_list.draw()
+
+    def update(self, delta_time: float = 1 / 60, *args: Any, **kwargs: Any) -> None:
+        self.block_list.update()
+
+
+class GameManager:
+    def __init__(self) -> None:
+        self.map = GridMap(GRID_ROWS, GRID_COLS)
+        for block in self.map.block_list:
+            block.on_animation_end = self.on_fall_animate_end
+
+        self.falling_blocks: int = 0
+        self.swapping_blocks: int = 0
+
+        self.just_swapped_blocks: List[Block] = []  # 刚刚交换的两个方块
+
+    @property
+    def animating_blocks(self) -> int:
+        return self.falling_blocks + self.swapping_blocks
+
+    @property
+    def clicked_block(self) -> Optional[Block]:
+        return self.map.clicked_block
+
+    @clicked_block.setter
+    def clicked_block(self, block: Block) -> None:
+
+        if self.map.clicked_block is None or not self.map.is_neighbor(
+            block, self.map.clicked_block
+        ):
+            self.map.clicked_block = block
         else:
-            self.center_x = self.target_x
+            self.swap_with_animation(self.map.clicked_block, block)
+            self.just_swapped_blocks = [block, self.map.clicked_block]
+            self.map.clicked_block = None
 
-        if abs(self.center_y - self.target_y) > 1:
-            self.center_y += (self.target_y - self.center_y) * 0.15
-            arrived = False
-        else:
-            self.center_y = self.target_y
-        return not arrived
+    def get_mergeable(self) -> List[Tuple[int, int]]:
+        mergeable: List[Tuple[int, int]] = []
+        for row in range(self.map.row - 2):
+            for col in range(self.map.col):
+                if (
+                    self.map.get_rc(row, col).block_type
+                    == self.map.get_rc(row + 1, col).block_type
+                    == self.map.get_rc(row + 2, col).block_type
+                ):
+                    mergeable.append((row, col))
+                    mergeable.append((row + 1, col))
+                    mergeable.append((row + 2, col))
+
+        for row in range(self.map.row):
+            for col in range(self.map.col - 2):
+                if (
+                    self.map.get_rc(row, col).block_type
+                    == self.map.get_rc(row, col + 1).block_type
+                    == self.map.get_rc(row, col + 2).block_type
+                ):
+                    mergeable.append((row, col))
+                    mergeable.append((row, col + 1))
+                    mergeable.append((row, col + 2))
+        return list(set(mergeable))
+
+    def is_game_over(self) -> bool:
+        for row in range(self.map.row):
+            for col in range(self.map.col - 1):
+                idx1 = row * self.map.col + col
+                idx2 = row * self.map.col + col + 1
+                self.map.block_list.swap(idx1, idx2)
+                mergeable = self.get_mergeable()
+                self.map.block_list.swap(idx1, idx2)
+                if mergeable:
+                    return False
+        for row in range(self.map.row - 1):
+            for col in range(self.map.col):
+                idx1 = row * self.map.col + col
+                idx2 = (row + 1) * self.map.col + col
+                self.map.block_list.swap(idx1, idx2)
+                mergeable = self.get_mergeable()
+                self.map.block_list.swap(idx1, idx2)
+                if mergeable:
+                    return False
+        return True
+
+    def swap_with_animation(self, b1: Block, b2: Block) -> None:
+        b1.target = b2.center_x, b2.center_y
+        b2.target = b1.center_x, b1.center_y
+        b1.on_animation_end = self.on_swap_animate_end
+        b2.on_animation_end = self.on_swap_animate_end
+        idx1 = self.map.block_list.index(b1)
+        idx2 = self.map.block_list.index(b2)
+        self.swapping_blocks += 2
+        self.map.block_list.swap(idx1, idx2)
+
+    def fall_down_with_animation(self, mergeable: List[Tuple[int, int]]) -> None:
+        # 统计每列需要消除几个，即生成几个
+        count_list: List[int] = [0 for _ in range(self.map.col)]
+        for _, col in mergeable:
+            count_list[col] += 1
+
+        # 画面外生成
+        y_offset = GRID_ROWS * BLOCK_WIDTH  # y轴偏置，加上后会到画面外
+
+        for col in range(self.map.col):
+            will_fall_list: List[Block] = []
+            first_empty_row = -1
+            for row in range(self.map.row):
+                if first_empty_row == -1 and (row, col) in mergeable:
+                    first_empty_row = row
+                    continue
+                if first_empty_row != -1 and (row, col) not in mergeable:
+                    will_fall_list.append(self.map.get_rc(row, col))
+            if first_empty_row == -1:
+                continue  # 说明这一列没有空格
+            for i in range(count_list[col]):
+                block = Block(random.choice(list(BlockType)))
+                block.on_animation_end = self.on_fall_animate_end
+                block.center_x = MARGIN + col * BLOCK_WIDTH + BLOCK_WIDTH // 2
+                block.center_y = MARGIN + i * BLOCK_WIDTH + BLOCK_WIDTH // 2 + y_offset
+                will_fall_list.append(block)
+            for block in will_fall_list:
+                # 给target
+                x = MARGIN + col * BLOCK_WIDTH + BLOCK_WIDTH // 2
+                y = MARGIN + first_empty_row * BLOCK_WIDTH + BLOCK_WIDTH // 2
+                block.target = (x, y)
+                if block in self.map.block_list:
+                    self.map.block_list.swap(
+                        self.map.block_list.index(block),
+                        self.map.col * first_empty_row + col,
+                    )
+                else:
+                    self.map.block_list[self.map.col * first_empty_row + col] = block
+                self.falling_blocks += 1
+                first_empty_row += 1
+
+    def on_animate_end(self, block: Block) -> None:
+        """block动画结束的回调函数"""
+        if self.animating_blocks == 0:
+            if self.is_game_over():
+                self.on_game_over()
+            mergeable = self.get_mergeable()
+            if mergeable:
+                self.fall_down_with_animation(mergeable)
+            elif self.just_swapped_blocks:
+                self.swap_with_animation(*self.just_swapped_blocks)
+            self.just_swapped_blocks = []
+
+    def on_game_over(self) -> None:
+        print("GAME OVER")
+
+    def on_swap_animate_end(self, block: Block) -> None:
+        self.swapping_blocks -= 1
+        self.on_animate_end(block)
+
+    def on_fall_animate_end(self, block: Block) -> None:
+        self.falling_blocks -= 1
+        self.on_animate_end(block)
 
 
 class HappyMatch(arcade.Window):
-    def __init__(self):
-        super().__init__(SCREEN_WIDTH, SCREEN_HEIGHT, "Happy Match Arcade 3.0")
-        arcade.set_background_color(arcade.color.AMAZON)
+    def __init__(self, width: int, height: int, title: str) -> None:
+        super().__init__(width, height)
+        self.set_caption(title)
+        arcade.set_background_color(arcade.color.ASH_GREY)
+        self.manager = GameManager()
+        self.map = self.manager.map
 
-        # 3.0 核心：所有显示对象必须在 SpriteList 里
-        self.blocks_list = arcade.SpriteList()
-        self.selection_list = arcade.SpriteList()
-
-        # 逻辑矩阵
-        self.grid: List[List[Optional[Block]]] = [[None for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
-
-        self.state = GameState.IDLE
-        self.selected_block: Optional[Block] = None
-        self.swapping_pair: List[Block] = []
-        self.is_reversing = False
-
-        # 初始化选框并放入专门的 SpriteList
-        self.selection_sprite = arcade.Sprite(":resources:/gui_basic_assets/checkbox/empty.png", scale=SELECT_SCALE)
-        self.selection_list.append(self.selection_sprite)
-
-        self.setup_game()
-
-    def setup_game(self):
-        for r in range(GRID_SIZE):
-            for c in range(GRID_SIZE):
-                while True:
-                    b_type = random.choice(list(BlockType))
-                    if c >= 2 and self.grid[r][c - 1].block_type == b_type and self.grid[r][
-                        c - 2].block_type == b_type: continue
-                    if r >= 2 and self.grid[r - 1][c].block_type == b_type and self.grid[r - 2][
-                        c].block_type == b_type: continue
-
-                    block = Block(b_type)
-                    block.move_to_grid(r, c)
-                    block.center_x, block.center_y = block.target_x, block.target_y
-                    self.grid[r][c] = block
-                    self.blocks_list.append(block)
-                    break
-
-    def get_grid_pos(self, block: Block):
-        for r in range(GRID_SIZE):
-            for c in range(GRID_SIZE):
-                if self.grid[r][c] == block: return r, c
-        return -1, -1
-
-    def find_matches(self):
-        to_del = set()
-        for r in range(GRID_SIZE):
-            for c in range(GRID_SIZE - 2):
-                if self.grid[r][c] and self.grid[r][c + 1] and self.grid[r][c + 2]:
-                    if self.grid[r][c].block_type == self.grid[r][c + 1].block_type == self.grid[r][c + 2].block_type:
-                        to_del.update([self.grid[r][c], self.grid[r][c + 1], self.grid[r][c + 2]])
-        for c in range(GRID_SIZE):
-            for r in range(GRID_SIZE - 2):
-                if self.grid[r][c] and self.grid[r + 1][c] and self.grid[r + 2][c]:
-                    if self.grid[r][c].block_type == self.grid[r + 1][c].block_type == self.grid[r + 2][c].block_type:
-                        to_del.update([self.grid[r][c], self.grid[r + 1][c], self.grid[r + 2][c]])
-        return list(to_del)
-
-    def on_update(self, delta_time: float):
-        # 动画更新
-        moving = False
-        for b in self.blocks_list:
-            if b.update_animation():
-                moving = True
-
-        if moving:
-            self.state = GameState.ANIMATING
-            return
-
-        # 动画停下后的逻辑处理
-        if self.state == GameState.ANIMATING:
-            # 如果是刚结束交换动画
-            if self.swapping_pair:
-                b1, b2 = self.swapping_pair
-                if self.find_matches():
-                    self.swapping_pair = []
-                    self.is_reversing = False
-                    self.process_elimination()
-                elif not self.is_reversing:
-                    # 没匹配到，执行回换
-                    self.swap_in_grid(b1, b2)
-                    self.is_reversing = True
-                else:
-                    # 回换结束
-                    self.swapping_pair = []
-                    self.is_reversing = False
-                    self.state = GameState.IDLE
-            else:
-                # 检查连消
-                if not self.process_elimination():
-                    self.state = GameState.IDLE
-
-    def swap_in_grid(self, b1, b2):
-        r1, c1 = self.get_grid_pos(b1)
-        r2, c2 = self.get_grid_pos(b2)
-        self.grid[r1][c1], self.grid[r2][c2] = self.grid[r2][c2], self.grid[r1][c1]
-        b1.move_to_grid(r2, c2)
-        b2.move_to_grid(r1, c1)
-
-    def process_elimination(self):
-        matches = self.find_matches()
-        if not matches: return False
-
-        for b in matches:
-            r, c = self.get_grid_pos(b)
-            self.grid[r][c] = None
-            b.remove_from_sprite_lists()
-
-        # 掉落逻辑
-        for c in range(GRID_SIZE):
-            column = []
-            for r in range(GRID_SIZE):
-                if self.grid[r][c]: column.append(self.grid[r][c])
-
-            for r in range(GRID_SIZE):
-                if r < len(column):
-                    self.grid[r][c] = column[r]
-                    self.grid[r][c].move_to_grid(r, c)
-                else:
-                    # 补新
-                    new_b = Block(random.choice(list(BlockType)))
-                    new_b.center_x = MARGIN + c * BLOCK_SPACING + BLOCK_SPACING // 2
-                    new_b.center_y = SCREEN_HEIGHT + 50
-                    new_b.move_to_grid(r, c)
-                    self.grid[r][c] = new_b
-                    self.blocks_list.append(new_b)
-        return True
-
-    def on_draw(self):
+    def on_draw(self) -> None:
         self.clear()
-        # 3.0 正确姿势：哪怕一个 Sprite 也要用 SpriteList.draw()
-        if self.selected_block and self.state == GameState.IDLE:
-            self.selection_sprite.center_x = self.selected_block.center_x
-            self.selection_sprite.center_y = self.selected_block.center_y
-            self.selection_list.draw()
+        self.map.draw()
 
-        self.blocks_list.draw()
+    def on_update(self, delta_time: float) -> None:
+        self.map.update()
 
-    def on_mouse_press(self, x: int, y: int, button: int, modifiers: int):
-        if self.state != GameState.IDLE: return
-
-        clicked = arcade.get_sprites_at_point((x, y), self.blocks_list)
-        if not clicked: return
-
-        current = clicked[0]
-        if not self.selected_block:
-            self.selected_block = current
-        else:
-            r1, c1 = self.get_grid_pos(self.selected_block)
-            r2, c2 = self.get_grid_pos(current)
-            if abs(r1 - r2) + abs(c1 - c2) == 1:
-                self.swapping_pair = [self.selected_block, current]
-                self.swap_in_grid(self.swapping_pair[0], self.swapping_pair[1])
-                self.state = GameState.ANIMATING
-                self.selected_block = None
-            else:
-                self.selected_block = current
+    def on_mouse_press(self, x: int, y: int, button: int, modifiers: int) -> None:
+        if self.manager.animating_blocks != 0:
+            return
+        l = arcade.get_sprites_at_point((x, y), self.map.block_list)
+        for blk in l:
+            self.manager.clicked_block = blk
 
 
 if __name__ == "__main__":
-    HappyMatch().run()
+    window = HappyMatch(SCREEN_WIDTH, SCREEN_HEIGHT, "Happy Match")
+    arcade.run()
