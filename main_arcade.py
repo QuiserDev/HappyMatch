@@ -127,6 +127,8 @@ class GameManager:
         self.falling_blocks: int = 0
         self.swapping_blocks: int = 0
 
+        self.just_swapped_blocks: List[Block] = []  # 刚刚交换的两个方块
+
     @property
     def animating_blocks(self) -> int:
         return self.falling_blocks + self.swapping_blocks
@@ -144,6 +146,7 @@ class GameManager:
             self.map.clicked_block = block
         else:
             self.swap_with_animation(self.map.clicked_block, block)
+            self.just_swapped_blocks = [block, self.map.clicked_block]
             self.map.clicked_block = None
 
     def get_mergeable(self) -> List[Tuple[int, int]]:
@@ -176,7 +179,6 @@ class GameManager:
         # todo 无可交换检测
 
     def swap_with_animation(self, b1: Block, b2: Block) -> None:
-        # todo 交换后无法消除需要重置
         b1.target = b2.center_x, b2.center_y
         b2.target = b1.center_x, b1.center_y
         b1.on_animation_end = self.on_swap_animate_end
@@ -233,6 +235,9 @@ class GameManager:
             mergeable = self.get_mergeable()
             if mergeable:
                 self.fall_down_with_animation(mergeable)
+            elif self.just_swapped_blocks:
+                self.swap_with_animation(*self.just_swapped_blocks)
+            self.just_swapped_blocks = []
 
     def on_swap_animate_end(self, block: Block) -> None:
         self.swapping_blocks -= 1
