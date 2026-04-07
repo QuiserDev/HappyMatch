@@ -174,9 +174,26 @@ class GameManager:
                     mergeable.append((row, col + 2))
         return list(set(mergeable))
 
-    def check_game_over(self) -> bool:
-        return False
-        # todo 无可交换检测
+    def is_game_over(self) -> bool:
+        for row in range(self.map.row):
+            for col in range(self.map.col - 1):
+                idx1 = row * self.map.col + col
+                idx2 = row * self.map.col + col + 1
+                self.map.block_list.swap(idx1, idx2)
+                mergeable = self.get_mergeable()
+                self.map.block_list.swap(idx1, idx2)
+                if mergeable:
+                    return False
+        for row in range(self.map.row - 1):
+            for col in range(self.map.col):
+                idx1 = row * self.map.col + col
+                idx2 = (row + 1) * self.map.col + col
+                self.map.block_list.swap(idx1, idx2)
+                mergeable = self.get_mergeable()
+                self.map.block_list.swap(idx1, idx2)
+                if mergeable:
+                    return False
+        return True
 
     def swap_with_animation(self, b1: Block, b2: Block) -> None:
         b1.target = b2.center_x, b2.center_y
