@@ -1,3 +1,8 @@
+import sys
+
+if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+    os.chdir(sys._MEIPASS)
+
 import arcade
 
 from constants import SCREEN_WIDTH, SCREEN_HEIGHT
