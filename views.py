@@ -1,10 +1,26 @@
 import arcade
 
-from constants import SCREEN_WIDTH, SCREEN_HEIGHT
+from constants import SCREEN_WIDTH, SCREEN_HEIGHT, BGM, GAMEOVER_SOUND
 from managers import GameManager
 
 
-class GameOverView(arcade.View):
+class HMBaseView(arcade.View):
+    def __init__(self) -> None:
+        super().__init__()
+
+    def on_show_view(self) -> None:
+        arcade.set_background_color(arcade.color.ASH_GREY)
+
+    def on_draw(self) -> None:
+        self.clear()
+
+
+class MenuView(HMBaseView):
+    def __init__(self) -> None:
+        super().__init__()
+
+
+class GameOverView(HMBaseView):
     def __init__(self) -> None:
         super().__init__()
         self.text_game_over = arcade.Text(
@@ -23,10 +39,11 @@ class GameOverView(arcade.View):
         )
 
     def on_show_view(self) -> None:
-        arcade.set_background_color(arcade.color.ASH_GREY)
+        super().on_show_view()
+        arcade.play_sound(GAMEOVER_SOUND, volume=0.3)
 
     def on_draw(self) -> None:
-        self.clear()
+        super().on_draw()
         self.text_game_over.draw()
         self.text_restart.draw()
 
@@ -35,22 +52,20 @@ class GameOverView(arcade.View):
             self.window.show_view(GameGridMapView())
 
 
-class GameGridMapView(arcade.View):
+class GameGridMapView(HMBaseView):
     def __init__(self) -> None:
         super().__init__()
         self.manager = GameManager(self.on_game_over)
         self.map = self.manager.map
-        print(111)
+        self.bgm_player = arcade.play_sound(BGM,volume=0.3 ,loop=True)
 
     def on_game_over(self) -> None:
+        if self.bgm_player is not None and self.bgm_player.playing:
+            arcade.stop_sound(self.bgm_player)
         self.window.show_view(GameOverView())
 
-    def on_show_view(self) -> None:
-        print(222)
-        arcade.set_background_color(arcade.color.ASH_GREY)
-
     def on_draw(self) -> None:
-        self.clear()
+        super().on_draw()
         self.map.draw()
 
     def on_update(self, delta_time: float) -> None:

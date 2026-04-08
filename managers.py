@@ -1,7 +1,10 @@
 import random
 from typing import List, Tuple, Optional, Callable
+
+import arcade
+
 from models import Block, GridMap, BlockType
-from constants import GRID_ROWS, GRID_COLS, BLOCK_WIDTH, MARGIN
+from constants import GRID_ROWS, GRID_COLS, BLOCK_WIDTH, MARGIN, CLICK_SOUND
 
 
 class GameManager:
@@ -140,13 +143,13 @@ class GameManager:
                 self.on_game_over()
             mergeable = self.get_mergeable()
             if mergeable:
+                arcade.play_sound(CLICK_SOUND)
                 self.fall_down_with_animation(mergeable)
             elif self.just_swapped_blocks:
                 self.swap_with_animation(*self.just_swapped_blocks)
             self.just_swapped_blocks = []
 
     def on_game_over(self) -> None:
-        print("GAME OVER")
         self._on_game_over()
 
     def on_swap_animate_end(self, block: Block) -> None:

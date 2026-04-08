@@ -1,6 +1,7 @@
 import sys
 
 if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+    import os
     os.chdir(sys._MEIPASS)
 
 import arcade
