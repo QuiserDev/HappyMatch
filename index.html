@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>开心消消乐 - Phaser版</title>
+    <style>
+        body {
+            margin: 0;
+            background: #2d1b4e;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+        #game-container {
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js">
+    </script>
+
+    <script>
+        const GRID_ROWS = 8;
+        const GRID_COLS = 6;
+        const CELL_SIZE = 64;
+        const BOARD_OFFSET_X = 40;
+        const BOARD_OFFSET_Y = 110;
+
+        const FRUIT_COLORS = [
+            0xe74c3c, 0x2ecc71, 0x3498db,
+            0xf1c40f, 0x9b59b6, 0xe67e22
+        ];
+        const FRUIT_NAMES = ['red', 'green', 'blue', 'yellow', 'purple', 'orange'];
+
+        class GameScene extends Phaser.Scene {
+            constructor() {
+                super('GameScene');
+            }
+
+            preload() {
+                // 动态生成水果纹理
+                for (let i = 0; i < FRUIT_COLORS.length; i++) {
+                    const color = FRUIT_COLORS[i];
+                    const name = FRUIT_NAMES[i];
+                    const gfx = this.make.graphics({ add: false });
+                    gfx.fillStyle(Phaser.Display.Color.IntegerToColor(color).darken(20).color, 1);
+                    gfx.fillCircle(32, 32, 30);
+                    gfx.fillStyle(color, 1);
+                    gfx.fillCircle(32, 32, 26);
+                    gfx.fillStyle(0xffffff, 0.25);
+                    gfx.fillCircle(26, 24, 10);
+                    gfx.fillStyle(0xffffff, 0.15);
+                    gfx.fillCircle(30, 28, 6);
+                    gfx.generateTexture(name, 64, 64);
+                    gfx.destroy();
+                }
+
+                // 高亮选中框
+                const hGfx = this.make.graphics({ add: false });
+                hGfx.lineStyle(4, 0xffffff, 0.9);
+                hGfx.strokeRoundedRect(2, 2, 60, 60, 10);
+                hGfx.generateTexture('highlight', 64, 64);
+                hGfx.destroy();
+
+                // 粒子
+                const pGfx = this.make.graphics({ add: false });
+                pGfx.fillStyle(0xffffff, 1);
+                pGfx.fillCircle(4, 4, 4);
+                pGfx.generateTexture('particle', 8, 8);
+                pGfx.destroy();
+            }
+
+            create() {
+                const bg = this.add.graphics();
+                bg.fillGradientStyle(0x2d1b4e, 0x2d1b4e, 0x1a0a2e, 0x1a0a2e, 1);
+                bg.fillRect(0, 0, 480, 720);
+                bg.lineStyle(4, 0xffd700, 0.6);
+                bg.strokeRoundedRect(15, 15, 450, 690, 24);
+
+                this.add.text(240, 35, '🍬 开心消消乐', {
+                    fontSize: '36px',
+                    fontFamily: 'Arial, "Microsoft YaHei"',
+                    fontStyle: 'bold',
+                    color: '#FFD700',
+                    stroke: '#000',
+                    strokeThickness: 5,
+                }).setOrigin(0.5);
+
+                this.scoreText = this.add.text(240, 75, '分数: 0', {
+                    fontSize: '22px',
+                    fontFamily: 'Arial',
+                    color: '#ffffff',
+                    backgroundColor: '#4a2e7a',
+                    padding: { x: 20, y: 6 },
+                    borderRadius: 15,
+                }).setOrigin(0.5);
+
+                this.grid = [];
+                this.sprites = [];
+                this.selected = null;
+                this.isProcessing = false;
+                this.score = 0;
+                this.highlightSprite = null;
+
+                this.drawBoard();
+                this.initGridWithoutMatches();
+                this.renderAllSprites();
+            }
+
+            drawBoard() {
+                const graphics = this.add.graphics();
+                graphics.lineStyle(2, 0x9b59b6, 0.2);
+                for (let row = 0; row < GRID_ROWS; row++) {
+                    for (let col = 0; col < GRID_COLS; col++) {
+                        const x = BOARD_OFFSET_X + col * CELL_SIZE;
+                        const y = BOARD_OFFSET_Y + row * CELL_SIZE;
+                        graphics.strokeRect(x, y, CELL_SIZE, CELL_SIZE);
+                    }
+                }
+            }
+
+            initGridWithoutMatches() {
+                this.grid = [];
+                for (let row = 0; row < GRID_ROWS; row++) {
+                    this.grid[row] = [];
+                    for (let col = 0; col < GRID_COLS; col++) {
+                        let color;
+                        do {
+                            color = Phaser.Math.Between(0, FRUIT_COLORS.length - 1);
+                        } while (this.wouldMatch(row, col, color));
+                        this.grid[row][col] = color;
+                    }
+                }
+            }
+
+            wouldMatch(row, col, color) {
+                if (col >= 2) {
+                    if (this.grid[row][col - 1] === color && this.grid[row][col - 2] === color) return true;
+                }
+                if (row >= 2) {
+                    if (this.grid[row - 1] && this.grid[row - 1][col] === color &&
+                        this.grid[row - 2] && this.grid[row - 2][col] === color) return true;
+                }
+                return false;
+            }
+
+            renderAllSprites() {
+                if (this.sprites) {
+                    for (let row = 0; row < GRID_ROWS; row++) {
+                        if (this.sprites[row]) {
+                            for (let col = 0; col < GRID_COLS; col++) {
+                                if (this.sprites[row][col]) this.sprites[row][col].destroy();
+                            }
+                        }
+                    }
+                }
+                this.sprites = [];
+                for (let row = 0; row < GRID_ROWS; row++) {
+                    this.sprites[row] = [];
+                    for (let col = 0; col < GRID_COLS; col++) {
+                        const colorIndex = this.grid[row][col];
+                        if (colorIndex !== -1) {
+                            this.sprites[row][col] = this.createFruitSprite(row, col, colorIndex);
+                        } else {
+                            this.sprites[row][col] = null;
+                        }
+                    }
+                }
+            }
+
+            createFruitSprite(row, col, colorIndex) {
+                const x = BOARD_OFFSET_X + col * CELL_SIZE + CELL_SIZE / 2;
+                const y = BOARD_OFFSET_Y + row * CELL_SIZE + CELL_SIZE / 2;
+                const sprite = this.add.image(x, y, FRUIT_NAMES[colorIndex]);
+                sprite.setInteractive();
+                sprite.setData('row', row);
+                sprite.setData('col', col);
+                sprite.setData('colorIndex', colorIndex);
+                sprite.on('pointerdown', () => this.onFruitClicked(sprite));
+                sprite.setScale(0);
+                this.tweens.add({ targets: sprite, scale: 1, duration: 250, ease: 'Back.easeOut' });
+                return sprite;
+            }
+
+            moveSpriteTo(sprite, targetRow, targetCol) {
+                const targetX = BOARD_OFFSET_X + targetCol * CELL_SIZE + CELL_SIZE / 2;
+                const targetY = BOARD_OFFSET_Y + targetRow * CELL_SIZE + CELL_SIZE / 2;
+                return new Promise(resolve => {
+                    this.tweens.add({
+                        targets: sprite,
+                        x: targetX,
+                        y: targetY,
+                        duration: 200,
+                        ease: 'Power2',
+                        onComplete: () => {
+                            sprite.setData('row', targetRow);
+                            sprite.setData('col', targetCol);
+                            // 同步 colorIndex，确保与网格数据一致
+                            const gridColor = this.grid[targetRow][targetCol];
+                            if (gridColor !== undefined && gridColor !== -1) {
+                                sprite.setData('colorIndex', gridColor);
+                            }
+                            resolve();
+                        }
+                    });
+                });
+            }
+
+            onFruitClicked(sprite) {
+                if (this.isProcessing) return;
+                const row = sprite.getData('row');
+                const col = sprite.getData('col');
+
+                if (!this.selected) {
+                    this.selected = { row, col };
+                    this.showHighlight(row, col, true);
+                } else {
+                    const prev = this.selected;
+                    if (prev.row === row && prev.col === col) {
+                        this.clearSelection();
+                        return;
+                    }
+                    const dr = Math.abs(prev.row - row);
+                    const dc = Math.abs(prev.col - col);
+                    if ((dr === 1 && dc === 0) || (dr === 0 && dc === 1)) {
+                        this.clearSelection();
+                        this.trySwap(prev.row, prev.col, row, col);
+                    } else {
+                        this.clearSelection();
+                        this.selected = { row, col };
+                        this.showHighlight(row, col, true);
+                    }
+                }
+            }
+
+            showHighlight(row, col, visible) {
+                if (this.highlightSprite) {
+                    this.highlightSprite.destroy();
+                    this.highlightSprite = null;
+                }
+                if (visible) {
+                    const x = BOARD_OFFSET_X + col * CELL_SIZE + CELL_SIZE / 2;
+                    const y = BOARD_OFFSET_Y + row * CELL_SIZE + CELL_SIZE / 2;
+                    this.highlightSprite = this.add.image(x, y, 'highlight').setAlpha(0.8);
+                    this.tweens.add({
+                        targets: this.highlightSprite,
+                        alpha: 0.5,
+                        duration: 500,
+                        yoyo: true,
+                        repeat: -1,
+                        ease: 'Sine.easeInOut',
+                    });
+                }
+            }
+
+            clearSelection() {
+                if (this.highlightSprite) {
+                    this.highlightSprite.destroy();
+                    this.highlightSprite = null;
+                }
+                this.selected = null;
+            }
+
+            async trySwap(row1, col1, row2, col2) {
+                if (this.isProcessing) return;
+                this.isProcessing = true;
+
+                const spriteA = this.sprites[row1][col1];
+                const spriteB = this.sprites[row2][col2];
+
+                // 交换数据模型
+                const temp = this.grid[row1][col1];
+                this.grid[row1][col1] = this.grid[row2][col2];
+                this.grid[row2][col2] = temp;
+
+                // 交换精灵引用
+                this.sprites[row1][col1] = spriteB;
+                this.sprites[row2][col2] = spriteA;
+
+                // 同时移动两个精灵（修复：不再一个接一个）
+                const movePromises = [];
+                if (spriteA) movePromises.push(this.moveSpriteTo(spriteA, row2, col2));
+                if (spriteB) movePromises.push(this.moveSpriteTo(spriteB, row1, col1));
+                await Promise.all(movePromises);
+
+                // 检测匹配
+                const matches = this.findAllMatches();
+                if (matches.length > 0) {
+                    await this.processMatchesChain();
+                } else {
+                    // 无效交换：回退
+                    this.grid[row1][col1] = this.grid[row2][col2]; // 注意这里用了 temp 恢复
+                    this.grid[row2][col2] = temp;
+                    const backA = this.sprites[row2][col2]; // spriteA
+                    const backB = this.sprites[row1][col1]; // spriteB
+                    this.sprites[row1][col1] = backA;
+                    this.sprites[row2][col2] = backB;
+
+                    const revertPromises = [];
+                    if (backA) revertPromises.push(this.moveSpriteTo(backA, row1, col1));
+                    if (backB) revertPromises.push(this.moveSpriteTo(backB, row2, col2));
+                    await Promise.all(revertPromises);
+                    this.cameras.main.shake(100, 0.005);
+                }
+                this.isProcessing = false;
+            }
+
+            findAllMatches() {
+                const matchedSet = new Set();
+                // 水平三消+
+                for (let row = 0; row < GRID_ROWS; row++) {
+                    for (let col = 0; col < GRID_COLS - 2; col++) {
+                        const val = this.grid[row][col];
+                        if (val === -1) continue;
+                        if (this.grid[row][col + 1] === val && this.grid[row][col + 2] === val) {
+                            let end = col + 2;
+                            while (end + 1 < GRID_COLS && this.grid[row][end + 1] === val) end++;
+                            for (let c = col; c <= end; c++) matchedSet.add(`${row},${c}`);
+                            col = end;
+                        }
+                    }
+                }
+                // 垂直三消+
+                for (let col = 0; col < GRID_COLS; col++) {
+                    for (let row = 0; row < GRID_ROWS - 2; row++) {
+                        const val = this.grid[row][col];
+                        if (val === -1) continue;
+                        if (this.grid[row + 1][col] === val && this.grid[row + 2][col] === val) {
+                            let end = row + 2;
+                            while (end + 1 < GRID_ROWS && this.grid[end + 1][col] === val) end++;
+                            for (let r = row; r <= end; r++) matchedSet.add(`${r},${col}`);
+                            row = end;
+                        }
+                    }
+                }
+                return Array.from(matchedSet).map(key => {
+                    const [r, c] = key.split(',').map(Number);
+                    return { row: r, col: c };
+                });
+            }
+
+            async processMatchesChain() {
+                let matches = this.findAllMatches();
+                while (matches.length > 0) {
+                    this.score += matches.length * 10;
+                    this.scoreText.setText(`分数: ${this.score}`);
+                    await this.removeMatches(matches);
+                    await this.fillEmptyCells();
+                    matches = this.findAllMatches();
+                }
+            }
+
+            async removeMatches(matches) {
+                const promises = [];
+                for (const { row, col } of matches) {
+                    const sprite = this.sprites[row][col];
+                    if (sprite) {
+                        this.createParticleEffect(sprite.x, sprite.y);
+                        promises.push(new Promise(resolve => {
+                            this.tweens.add({
+                                targets: sprite,
+                                scale: 0,
+                                alpha: 0,
+                                duration: 200,
+                                ease: 'Power2',
+                                onComplete: () => { sprite.destroy(); resolve(); }
+                            });
+                        }));
+                        this.sprites[row][col] = null;
+                        this.grid[row][col] = -1;
+                    }
+                }
+                await Promise.all(promises);
+            }
+
+            createParticleEffect(x, y) {
+                const particles = this.add.particles(x, y, 'particle', {
+                    speed: { min: 50, max: 150 },
+                    scale: { start: 1, end: 0 },
+                    lifespan: 400,
+                    quantity: 8,
+                    tint: FRUIT_COLORS,
+                    emitting: false,
+                });
+                particles.explode();
+                this.time.delayedCall(500, () => particles.destroy());
+            }
+
+            async fillEmptyCells() {
+                const animations = [];
+                for (let col = 0; col < GRID_COLS; col++) {
+                    let writeRow = GRID_ROWS - 1;
+                    for (let row = GRID_ROWS - 1; row >= 0; row--) {
+                        if (this.grid[row][col] !== -1) {
+                            if (row !== writeRow) {
+                                this.grid[writeRow][col] = this.grid[row][col];
+                                this.grid[row][col] = -1;
+                                const sprite = this.sprites[row][col];
+                                this.sprites[writeRow][col] = sprite;
+                                this.sprites[row][col] = null;
+                                if (sprite) animations.push(this.moveSpriteTo(sprite, writeRow, col));
+                            }
+                            writeRow--;
+                        }
+                    }
+                    // 顶部生成新水果
+                    for (let r = writeRow; r >= 0; r--) {
+                        const color = Phaser.Math.Between(0, FRUIT_COLORS.length - 1);
+                        this.grid[r][col] = color;
+                        const sprite = this.createFruitSprite(r, col, color);
+                        this.sprites[r][col] = sprite;
+                        sprite.y = BOARD_OFFSET_Y - CELL_SIZE;
+                        animations.push(this.moveSpriteTo(sprite, r, col));
+                    }
+                }
+                await Promise.all(animations);
+            }
+        }
+
+        const config = {
+            type: Phaser.AUTO,
+            width: 480,
+            height: 720,
+            parent: 'game-container',
+            backgroundColor: '#2d1b4e',
+            scene: [GameScene],
+            scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
+        };
+
+        new Phaser.Game(config);
+    </script>
+</body>
+</html>
